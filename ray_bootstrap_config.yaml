@@ -1,0 +1,28 @@
+cluster_name: fraud_detection_cluster
+
+max_workers: 5
+
+initial_workers: 2
+
+autoscaling_mode: default
+
+docker:
+    image: rayproject/ray:latest
+    container_name: ray_worker
+    pull_before_run: True
+
+
+available_node_types:
+    ray.head.default:
+        node_config: {}
+        resources: {"CPU": 2}
+    ray.worker.default:
+        node_config: {}
+        resources: {"CPU": 2}
+        max_workers: 5
+
+setup_commands:
+    - pip install -r /app/requirements.txt
+
+worker_start_ray_commands:
+    - ray start --address=$RAY_HEAD_HOST:10001 --block

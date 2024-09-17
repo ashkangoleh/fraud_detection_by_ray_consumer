@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pandas
+sqlalchemy
+psycopg2-binary
+pymysql
+neo4j
+confluent-kafka
+ray[default]
+ray[client]
+scikit-learn
+numpy
+pyarrow

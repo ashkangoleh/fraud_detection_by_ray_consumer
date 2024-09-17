@@ -1,0 +1,146 @@
+services:
+  # Ray Head Node
+  ray-head:
+    build: .
+    image: rayproject/ray:latest
+    container_name: ray-head
+    command: >
+      ray start --head --port=6379 --object-manager-port=22345 --node-manager-port=22346  --dashboard-host=0.0.0.0 --block
+# ray start --head --port=6379 --redis-shard-ports=6380,6381 --object-manager-port=22345 --autoscaling-config=/ray_bootstrap_config.yaml --node-manager-port=22346 --dashboard-host=0.0.0.0 --block
+    ports:
+      - "8265:8265" # Ray dashboard
+      - "6379:6379" # Redis for Ray head
+    volumes:
+      - ./:/app
+    networks:
+      - proxy
+    environment:
+      - PYTHONPATH=/app
+    shm_size: "4.80gb"
+
+  # Ray Worker Node
+  ray-worker:
+    build: .
+    image: rayproject/ray:latest
+    container_name: ray-worker
+    depends_on:
+      - ray-head
+    environment:
+      - RAY_HEAD_HOST=ray-head
+      - PYTHONPATH=/app
+    volumes:
+      - ./:/app 
+    command: >
+      ray start --address=ray-head:6379 --object-manager-port=22347 --node-manager-port=22348 --block
+    networks:
+      - proxy
+    shm_size: "4.80gb"
+
+  # FastAPI
+  fastapi:
+    build: ./app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - RAY_HEAD_HOST=ray-head
+    depends_on:
+      - ray-head
+    networks:
+      - proxy
+
+  # Zookeeper Service for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_SERVERS: "zookeeper:22888:23888"
+    networks:
+      - proxy
+    volumes:
+      - ./zookeeper_data:/var/lib/zookeeper/data
+      - ./zookeeper_log:/var/lib/zookeeper/log
+
+  # Kafka Broker 1
+  kafka1:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka1
+    depends_on:
+      - zookeeper
+    networks:
+      - proxy
+    ports:
+      - "9092:9092" # Internal listener
+      - "29092:29092" # External listener
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+
+  # Kafka Broker 2
+  kafka2:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka2
+    depends_on:
+      - zookeeper
+    networks:
+      - proxy
+    ports:
+      - "9093:9092" # Internal listener
+      - "29093:29093" # External listener
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9092,PLAINTEXT_HOST://localhost:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+
+  # AKHQ (Kafka UI)
+  akhq:
+    image: tchiotludo/akhq:latest
+    container_name: akhq
+    depends_on:
+      - kafka1
+      - kafka2
+    networks:
+      - proxy
+    ports:
+      - "8383:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            kafka-cluster:
+              properties:
+                bootstrap.servers: "kafka1:9092,kafka2:9093"
+
+  # Neo4j Service
+  neo4j:
+    image: neo4j:4.4
+    container_name: neo4j
+    environment:
+      NEO4J_AUTH: "neo4j/password"
+    ports:
+      - "7474:7474" # Neo4j Web Interface
+      - "7687:7687" # Bolt Protocol
+    volumes:
+      - ./neo4j_data:/data
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
